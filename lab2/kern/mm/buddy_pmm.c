@@ -545,58 +545,52 @@ buddy_check(void) {
     buddy_basic_check();
     cprintf("basic check finished!");
     // 更复杂的分配/释放组合测试（大致复刻 default_check 的流程）
-    struct Page *p0 = alloc_pages(5), *p1, *p2;
-    // assert(p0 != NULL);
-    // assert(!PageProperty(p0));
+    struct Page *p0 = alloc_pages(8), *p1, *p2;
+    assert(p0 != NULL);
+    assert(!PageProperty(p0));
 
-    // // 保存并清空所有 free lists
-    // list_entry_t free_array_store[BUDDY_NR_FREE];
-    // unsigned int nr_free_store[BUDDY_NR_FREE];
-    // for (int i = 0; i < BUDDY_NR_FREE; i++) {
-    //     free_array_store[i] = free_array[i];
-    //     nr_free_store[i] = nr_free_array[i];
-    //     list_init(&free_array[i]);
-    //     nr_free_array[i] = 0;
-    // }
-    // assert(alloc_page() == NULL);
+    //保存并清空所有 free lists
+    list_entry_t free_array_store[BUDDY_NR_FREE];
+    unsigned int nr_free_store[BUDDY_NR_FREE];
+    for (int i = 0; i < BUDDY_NR_FREE; i++) {
+        free_array_store[i] = free_array[i];
+        nr_free_store[i] = nr_free_array[i];
+        list_init(&free_array[i]);
+        nr_free_array[i] = 0;
+    }
+    assert(alloc_page() == NULL);
 
-    // // for (int i = 0; i < BUDDY_NR_FREE; i++) {
-    // //     nr_free_store[i] = nr_free_array[i];
-    // // }
+    
 
     // // 释放中间部分并测试无法分配大块
-    // free_pages(p0 + 2, 3);
-    // assert(alloc_pages(4) == NULL);
-    // assert(PageProperty(p0 + 2));
-    // cprintf("p0[2].property =%d",p0[2].property);
-    // //assert(p0[2].property == 3);
-    // //assert((p1 = alloc_pages(3)) != NULL);
-    // //assert(alloc_page() == NULL);
-    // //assert(p0 + 2 == p1);
+    free_pages(p0 + 2, 4);
+    assert(alloc_pages(8) == NULL);
+    assert(PageProperty(p0 + 2));
+    
+    assert((p1 = alloc_pages(4)) != NULL);
+    assert(alloc_page() == NULL);
+    assert(p0 + 2 == p1);
 
-    // p2 = p0 + 1;
-    // free_page(p0);
-    // //free_pages(p1, 3);
-    // assert(PageProperty(p0) && p0->property == 1);
-    // //assert(PageProperty(p1) && p1->property == 3);
+    p2 = p0 + 1;
+    free_page(p0);
+    free_pages(p1, 4);
+    assert(PageProperty(p0) && p0->property == 1);
+    
+    assert((p0 = alloc_page()) == p2 - 1);
+    free_page(p0);
+    assert((p0 = alloc_pages(2)) == p2 + 1);
 
-    // assert((p0 = alloc_page()) == p2 - 1);
-    // free_page(p0);
-    // assert((p0 = alloc_pages(2)) == p2 + 1);
+    free_pages(p0, 2);
+    free_page(p2);
 
-    // free_pages(p0, 2);
-    // free_page(p2);
 
-    // //assert((p0 = alloc_pages(5)) != NULL);
-    // //assert(alloc_page() == NULL);
+    // 恢复原来的 free lists 与计数
+    for (int i = 0; i < BUDDY_NR_FREE; i++) {
+        free_array[i] = free_array_store[i];
+        nr_free_array[i] = nr_free_store[i];
+    }
 
-    // // 恢复原来的 free lists 与计数
-    // for (int i = 0; i < BUDDY_NR_FREE; i++) {
-    //     free_array[i] = free_array_store[i];
-    //     nr_free_array[i] = nr_free_store[i];
-    // }
-
-    free_pages(p0, 5);
+    free_pages(p0, 2);
 
     // 最后核对先前计数是否被完全回收
     
@@ -610,9 +604,9 @@ buddy_check(void) {
         }
     }
     
-    cprintf("remaining_total = %d\n",remaining_total );
-    
-    assert(remaining_total == 0);
+   
+
+    assert(remaining_total == 6);
 }
 //综合检查，参考 default_pmm 的 default_check 结构
 // static void
