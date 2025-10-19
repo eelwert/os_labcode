@@ -192,7 +192,7 @@ best_fit_free_pages(struct Page *base, size_t n) {
  
 ## 扩展练习Challenge：buddy system（伙伴系统）分配算法（需要编程）
  
-
+详见lab2/kern/mm/buddy_system.markdown
 
 ## 扩展练习Challenge：任意大小的内存单元slub分配算法（需要编程）
 
