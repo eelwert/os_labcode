@@ -44,8 +44,6 @@ Next-Fit算是对first-fit的优化算法，即每次记录上次分配的位置
 
 ## 练习2：实现 Best-Fit 连续物理内存分配算法（需要编程）
 
-在完成练习一后，参考kern/mm/default_pmm.c对First Fit算法的实现，编程实现Best Fit页面分配算法，算法的时空复杂度不做要求，能通过测试即可。
-请在实验报告中简要说明你的设计实现过程，阐述代码是如何对物理内存进行分配和释放，并回答如下问题：
 ### 代码实现
 - #### best_fit_init_memmap
 ```
@@ -84,7 +82,7 @@ best_fit_init_memmap(struct Page *base, size_t n) {
     }
 }
 ```
-  与default_pmm.c中实现基本一致，将一段连续的物理页（从 base 开始，共 n 页）初始化为 “空闲块”，并按物理地址升序插入空闲链表。
+  与default_pmm.c中实现基本一致，将一段连续的物理页（从 base 开始，共 n 页）初始化为空闲块，并按物理地址升序插入空闲链表。
 - #### best_fit_alloc_pages
 ```
 static struct Page *
@@ -185,10 +183,10 @@ best_fit_free_pages(struct Page *base, size_t n) {
     }
 }
 ```
-  与default_pmm.c中实现基本一致，将一段连续的物理页（从 base 开始，共 n 页）释放为 “空闲块”，并按物理地址升序插入空闲链表，并合并相邻空闲块。
+  与default_pmm.c中实现基本一致，将一段连续的物理页（从 base 开始，共 n 页）释放为空闲块，并按物理地址升序插入空闲链表，并合并相邻空闲块。
 #### 问题：你的 Best-Fit 算法是否有进一步的改进空间？
- 当前 best_fit_alloc_pages 为找到 “最小满足块”，需全线性遍历整个空闲链表。若系统长期运行后产生大量空闲块，分配效率会显著下降。
- 方法是尝试修改 best_fit_init_memmap 和 best_fit_free_pages 的逻辑，让每个空闲链表按块大小升序存储空闲块。分配时无需全遍历 —— 只需像first_fit算法一样从链表头部开始，找到第一个页数≥n的块即为最小满足块，直接退出遍历。
+ 当前 best_fit_alloc_pages 为找到 “最小满足块”，需全线性遍历整个空闲链表。若系统长期运行后产生大量空闲块，分配效率会显著下降。  
+ 方法是尝试修改 best_fit_init_memmap 和 best_fit_free_pages 的链表插入逻辑，让每个空闲链表按块大小升序存储空闲块。分配时无需全遍历 —— 只需像first_fit算法一样从链表头部开始，找到第一个页数≥n的块即为最小满足块，直接退出遍历。
  
 ## 扩展练习Challenge：buddy system（伙伴系统）分配算法（需要编程）
  
