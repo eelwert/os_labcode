@@ -24,37 +24,37 @@ static buddy_free_area_t buddy_free_area;
 
 
 /* Helper: 从所有 free_array 列表中找到地址小于 key 的最大块（前驱），若无返回 NULL */
-static struct Page *
-find_prev_free_block(struct Page *key) {
-	size_t best_idx = (size_t)-1;
-	struct Page *best = NULL;
-	for (int i = 0; i <= MAX_ORDER; i++) {
-		list_entry_t *le = &free_array[i];
-		for (list_entry_t *it = list_next(le); it != le; it = list_next(it)) {
-			struct Page *p = le2page(it, page_link);
-			if (p < key) {
-				if (best == NULL || p > best) best = p;
-			}
-		}
-	}
-	return best;
-}
+// static struct Page *
+// find_prev_free_block(struct Page *key) {
+// 	size_t best_idx = (size_t)-1;
+// 	struct Page *best = NULL;
+// 	for (int i = 0; i <= MAX_ORDER; i++) {
+// 		list_entry_t *le = &free_array[i];
+// 		for (list_entry_t *it = list_next(le); it != le; it = list_next(it)) {
+// 			struct Page *p = le2page(it, page_link);
+// 			if (p < key) {
+// 				if (best == NULL || p > best) best = p;
+// 			}
+// 		}
+// 	}
+// 	return best;
+// }
 
 /* Helper: 从所有 free_array 列表中找到地址大于 key 的最小块（后继），若无返回 NULL */
-static struct Page *
-find_next_free_block(struct Page *key) {
-	struct Page *best = NULL;
-	for (int i = 0; i <= MAX_ORDER; i++) {
-		list_entry_t *le = &free_array[i];
-		for (list_entry_t *it = list_next(le); it != le; it = list_next(it)) {
-			struct Page *p = le2page(it, page_link);
-			if (p > key) {
-				if (best == NULL || p < best) best = p;
-			}
-		}
-	}
-	return best;
-}
+//static struct Page *
+// find_next_free_block(struct Page *key) {
+// 	struct Page *best = NULL;
+// 	for (int i = 0; i <= MAX_ORDER; i++) {
+// 		list_entry_t *le = &free_array[i];
+// 		for (list_entry_t *it = list_next(le); it != le; it = list_next(it)) {
+// 			struct Page *p = le2page(it, page_link);
+// 			if (p > key) {
+// 				if (best == NULL || p < best) best = p;
+// 			}
+// 		}
+// 	}
+// 	return best;
+// }
 
 /* Helper functions */
 /* 获取页的阶数 */
@@ -74,14 +74,14 @@ static bool is_power_of_two(size_t n) {
 }
 
 /* 获取伙伴页的编号 */
-static size_t get_buddy_number(struct Page *page, unsigned int order) {
-    return (page - pages) / (1 << order);
-}
+// static size_t get_buddy_number(struct Page *page, unsigned int order) {
+//     return (page - pages) / (1 << order);
+// }
 
-static struct Page *get_buddy(struct Page *page, unsigned int order) {
-    size_t buddy_num = get_buddy_number(page, order) ^ 1;
-    return &pages[buddy_num << order];
-}
+// static struct Page *get_buddy(struct Page *page, unsigned int order) {
+//     size_t buddy_num = get_buddy_number(page, order) ^ 1;
+//     return &pages[buddy_num << order];
+// }
 
 static void
 buddy_init(void) {
