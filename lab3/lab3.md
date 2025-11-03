@@ -49,18 +49,22 @@
     完整流程如下：
 1. 异常产生：
 若为中断，硬件异步触发；若为异常，执行某条指令时同步触发。
+
 2. 硬件自动处理：\
 保存PC到sepc；\
 设置scause（中断→最高位 1，异常→0，低 31 位为原因码）；\
 设置stval（异常时存附加信息，如非法地址）；\
 切特权级到 S 模式，保存SIE到SPIE，再禁中断（SIE=0）；\
 PC 跳stvec指向的__alltraps。
+
 3. 汇编层保存上下文：\
 执行SAVE_ALL宏，把通用寄存器和关键 CSR 存入栈，形成TrapFrame；\
 move a0, sp传TrapFrame地址，调用 trap()。
+
 4. C 语言层分发处理：\
 trap()→ trap_dispatch()，按scause分发给interrupt_handler（中断）或exception_handler（异常）；\
 执行具体处理（如时钟中断计数、异常打印地址）。
+
 5. 恢复上下文并返回：\
 执行RESTORE_ALL宏，恢复寄存器和 sstatus/sepc；\
 sret指令：PC=sepc，恢复SIE，切回原特权级，原程序继续执行。
