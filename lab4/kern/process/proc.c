@@ -182,7 +182,7 @@ get_pid(void)
             {
                 next_safe = proc->pid;
             }
-        }
+        } 
     }
     return last_pid;
 }

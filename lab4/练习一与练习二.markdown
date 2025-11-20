@@ -1,0 +1,50 @@
+## 练习1：分配并初始化一个进程控制块（需要编码）
+alloc_proc函数（位于kern/process/proc.c中）负责分配并返回一个新的struct proc_struct结构，用于存储新建立的内核线程的管理信息。ucore需要对这个结构进行最基本的初始化，你需要完成这个初始化过程。
+
+请在实验报告中简要说明你的设计实现过程。请回答如下问题：
+
+### 请说明proc_struct中struct context context和struct trapframe *tf成员变量含义和在本实验中的作用是啥？（提示通过看代码和编程调试可以判断出来）
+context: 进程内核调度上下文,用于“内核态上下文切换”的最小寄存器集，保存 ra/sp/s0–s11。调度器在不同进程间切换时（proc_run/switch_to），会把当前进程的这些寄存器保存current->context，再从下一个进程的 next->context 恢复，从而切到它的内核栈、返回点继续执行。
+放置位置: 直接保存在 struct proc_struct 内（struct context context;），因为它是“进程内核态”的持久切换点。
+在本实验中的作用: 支撑调度器完成“主动的”内核级切换（不涉及用户态寄存器全量保存），如从当前进程切到就绪进程。创建内核线程时也会初始化它（如设置 sp 到内核栈顶，ra 到启动入口）。
+
+tf: 陷入帧（trapframe）
+记录一次“陷入”(系统调用/异常/中断)时的完整 CPU 状态，通常包含通用寄存器、sepc（返回地址）、sstatus 等。当用户态执行 ecall 或被中断/异常打断时，陷入入口汇编在该进程的内核栈上“现场”压栈形成一块 trapframe，并令 current->tf 指向它。内核处理完后通过 trap_return/sret 从 tf 恢复并回到用户态。
+放置位置: 实际内存位于当前进程的内核栈顶区域，proc->tf 只是指针，便于 C 代码访问与修改（例如设置返回值）。
+系统调用路径：内核从 tf 里取参数/返回地址，处理后写回返回值（如写 tf->a0），再用 sret 返回用户态。
+抢占/时钟中断：中断时先保存到 tf，可能设置 need_resched 触发调度。调度器用 context 切到别的进程；当该进程再次被选中时，仍从它的 tf 恢复并回到原先的用户态执行点（sepc）。
+do_fork 会复制父进程的 tf 给子进程，并把子进程的返回值改为 0；do_execve 会重建一个新的 tf，设置用户栈指针与 sepc 为新程序入口。
+
+
+## 练习2：为新创建的内核线程分配资源（需要编码）
+创建一个内核线程需要分配和设置好很多资源。kernel_thread函数通过调用do_fork函数完成具体内核线程的创建工作。do_kernel函数会调用alloc_proc函数来分配并初始化一个进程控制块，但alloc_proc只是找到了一小块内存用以记录进程的必要信息，并没有实际分配这些资源。ucore一般通过do_fork实际创建新的内核线程。do_fork的作用是，创建当前内核线程的一个副本，它们的执行上下文、代码、数据都一样，但是存储位置不同。因此，我们实际需要"fork"的东西就是stack和trapframe。在这个过程中，需要给新内核线程分配资源，并且复制原进程的状态。你需要完成在kern/process/proc.c中的do_fork函数中的处理过程。它的大致执行步骤包括：
+
+调用alloc_proc，首先获得一块用户信息块。
+为进程分配一个内核栈。
+复制原进程的内存管理信息到新进程（但内核线程不必做此事）
+复制原进程上下文到新进程
+将新进程添加到进程列表
+唤醒新进程
+返回新进程号
+### 请在实验报告中简要说明你的设计实现过程。请回答如下问题：请说明ucore是否做到给每个新fork的线程一个唯一的id？请说明你的分析和理由。
+一、alloc_proc设计流程说明
+
+使用kmalloc(sizeof(struct proc_struct))获取一块连续内核堆内存作为进程控制块。如果分配失败直接返回 NULL，避免后续使用野指针。
+memset(proc, 0, sizeof(...))先统一置零，保证所有未显式初始化的标量/指针默认为安全值（NULL/0），避免残留旧内存数据影响调度或列表操作。
+再对有语义的字段设置哨兵值：state=PROC_UNINIT表示尚未进入就绪队列；pid=-1标记尚未分配 PID；runs=0运行计数初始为 0；kstack=0表示还没分配内核栈；need_resched=0初始不要求调度；parent=NULL尚无父指针绑定；mm=NULL内核线程或尚未复制地址空间；context清零保证第一次调度前不会跳到随机地址；tf=NULL表示还没有陷入现场；pgdir=boot_pgdir_pa使其暂时使用内核（引导）页表，后续 fork/exec 时再替换；flags=0无特殊标志；name已在 memset 中清零，避免脏字符串。
+list_init(&proc->list_link)和list_init(&proc->hash_link)把双向链表指针自指，保证插入前不会破坏全局进程链表/哈希表结构。
+
+
+二、uCore是否为每个新 fork 线程分配唯一 PID 的分析
+是的，uCore 确保每个新 fork 的线程获得一个唯一的进程标识符（PID）。
+分配位置: 在do_fork里执行 proc->pid = get_pid();。
+核心算法: get_pid()维护两个静态变量：last_pid与next_safe。每次尝试：
+++last_pid，若达到或超过MAX_PID则回绕到 1（跳过 0 和任何保留值）。
+若last_pid >= next_safe进入重新扫描过程：遍历proc_list检查是否冲突。
+若发现已有进程 proc->pid == last_pid，再次递增last_pid，必要时回绕，并重新扫描（goto repeat），直到找到未被占用的值。
+同时利用next_safe记录当前扫描中大于last_pid的最小占用 pid，用以缩短未来扫描范围。
+终止条件: 返回一个当前未被任何活动进程使用的 last_pid。
+正确性依据:
+不会重复选择：冲突时强制递增并重新扫描，直到无匹配。
+保证有空位：static_assert(MAX_PID > MAX_PROCESS)确保可用 PID 空间大于最大并发进程数；在最坏情况下遍历所有活动进程后必有至少一个未使用的 pid。
+并且当到达MAX_PID-1后重置为 1，并重新扫描，避免越界；如果某 pid 被释放（进程退出），后续循环可再次分配该 pid，但绝不会与仍存活的进程同时冲突。
