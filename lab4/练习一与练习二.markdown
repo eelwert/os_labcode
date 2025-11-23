@@ -48,3 +48,40 @@ list_init(&proc->list_link)和list_init(&proc->hash_link)把双向链表指针�
 不会重复选择：冲突时强制递增并重新扫描，直到无匹配。
 保证有空位：static_assert(MAX_PID > MAX_PROCESS)确保可用 PID 空间大于最大并发进程数；在最坏情况下遍历所有活动进程后必有至少一个未使用的 pid。
 并且当到达MAX_PID-1后重置为 1，并重新扫描，避免越界；如果某 pid 被释放（进程退出），后续循环可再次分配该 pid，但绝不会与仍存活的进程同时冲突。
+
+## 练习3：编写 proc_run 函数（需要编码）
+
+
+## 扩展练习 Challenge
+### 1.说明语句local_intr_save(intr_flag);....local_intr_restore(intr_flag);是如何实现开关中断的？
+通过 sstatus 寄存器 控制中断使能，关键位是 SIE，SIE=1为允许内核态中断；SIE=0为禁止内核态中断。其中参数intr_flag用于保存中断状态，intr_flag=1表示之前中断是开启的，后续需恢复；intr_flag=0表示之前中断已禁用。
+
+__intr_save 是 local_intr_save 的核心实现
+```
+static inline bool __intr_save(void) {      
+    if (read_csr(sstatus) & SSTATUS_SIE) {  // 读取当前 sstatus 寄存器值，判断 SIE 位
+        intr_disable();                     // 若当前允许中断（SIE=1），则禁用中断（设置SIE=0）
+        return 1;                           // 保存中断状态
+    }
+    return 0;
+}
+```
+__intr_restore 是 local_intr_restore 的核心实现
+```
+static inline void __intr_restore(bool flag) {
+    if (flag) {                             
+        intr_enable();                      // 若 flag=1（表示之前中断是开启的），则恢复中断使能（设置SIE=1）
+    }
+}
+```
+
+### 2.深入理解不同分页模式的工作原理（思考题）
+get_pte()函数（位于kern/mm/pmm.c）用于在页表中查找或创建页表项，从而实现对指定线性地址对应的物理页的访问和映射操作。这在操作系统中的分页机制下，是实现虚拟内存与物理内存之间映射关系非常重要的内容。
+
+（1）get_pte()函数中有两段形式类似的代码， 结合sv32，sv39，sv48的异同，解释这两段代码为什么如此相像。
+
+sv32，sv39，sv48为不同的分页模式，分别对应页表级数为2级、3级和4级，其中每级查找的逻辑完全一致，无论多少级页表，每一级的代码框架都相同。get_pte 的两段代码分别对应 sv39 的前两级页表查找（PDX1 和 PDX0），因此其代码也相像。
+
+（2）目前get_pte()函数将页表项的查找和页表项的分配合并在一个函数里，你认为这种写法好吗？有没有必要把两个功能拆开？
+
+部分操作（如get_page，page_remove）只需进行查找，此种写法会产生多余运算。将仅查找操作分离出来能做到按需调用，提升效率。
