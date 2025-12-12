@@ -1,0 +1,87 @@
+## 请分析fork/exec/wait/exit的执行流程。重点关注哪些操作是在用户态完成，哪些是在内核态完成？内核态与用户态程序是如何交错执行的？内核态执行结果是如何返回给用户程序的？
+
+
+
+用户态通过 syscall.c 中的封装设置 a0=系统调用号、a1..a5=参数，执行 ecall 触发陷入。
+trapentry.S::__alltraps 保存现场并跳到 trap()；trap_dispatch 识别 CAUSE_USER_ECALL 调用 syscall()。
+syscall.c 根据 a0 分发到对应 sys_*，返回值写回 tf->gpr.a0。
+__trapret 恢复寄存器后 sret，回到用户态，用户库封装从 a0 取到返回值。
+#### fork（创建子进程）
+
+用户态：调用 sys_fork() → ecall。
+内核态：
+sys_fork 把当前陷入时的 trapframe 传给 do_fork(0, sp, tf)。
+do_fork（proc.c）：alloc_proc 分配 PCB；setup_kstack 分配内核栈；copy_mm 复制/共享父进程地址空间（这里非 CLONE_VM，复制页表+VMA）；copy_thread 复制陷阱帧并把子进程 a0 设为 0；set_links/hash_proc 入队；wakeup_proc 置 PROC_RUNNABLE。
+返回：父进程拿到子 pid，写入父的 a0；子进程首次被调度时走 forkrets → __trapret，用自己的陷阱帧返回用户态，此时子进程在用户态看到 sys_fork 返回 0。
+交错：父/子都回到用户态，但子要等调度器选中后才运行。
+#### exec（装载新程序）
+
+用户态：调用 sys_exec(name,len,binary,size)（实验里常由内核线程 user_main 触发 ebreak→kernel_execve_ret 走同一路径）。
+内核态：
+sys_exec → do_execve；先用 user_mem_check 校验用户参数。
+若进程已有 mm，先切换到 boot_pgdir，mm_count_dec 到 0 时 exit_mmap/put_pgdir/mm_destroy 释放旧地址空间。
+load_icode：创建新 mm，setup_pgdir，遍历 ELF program headers mm_map + pgdir_alloc_page 把段内容拷入/清零 BSS，建立用户栈（USTACKTOP-USTACKSIZE），mm_count_inc、current->pgdir、lsatp 切到新页表。
+重置陷阱帧：tf->gpr.sp = USTACKTOP，tf->epc = ELF entry，tf->status 清 SPP 置 SPIE 使能用户返回。
+成功返回 0，失败则 do_exit(ret)。
+返回：__trapret 按新的 tf 跳到新程序入口，用户态看到的就是 exec 后的新指令流（原用户栈/寄存器被覆盖）。
+#### wait（回收子进程）
+
+用户态：sys_wait(pid, &code)。
+内核态：
+sys_wait → do_wait；先 user_mem_check 校验 code_store 可写。
+查找目标或任意子：若无子返回 -E_BAD_PROC；有但未成僵尸则把当前进程置 PROC_SLEEPING、wait_state=WT_CHILD，schedule() 让出 CPU；被唤醒（子退出或被 kill）后循环重查。
+找到僵尸子：把 exit_code 写回用户指针；unhash_proc/remove_links 脱链；put_kstack/kfree 释放 PCB/内核栈；返回 0。
+返回：a0 带回 0 或错误码，用户态继续。
+#### exit（退出当前进程）
+
+用户态：sys_exit(code)。
+内核态：
+sys_exit → do_exit：禁止 idle/init 退出；如果有 mm，先 lsatp(boot_pgdir_pa) 切回内核页表，mm_count_dec 到 0 时 exit_mmap + put_pgdir + mm_destroy 释放用户地址空间。
+设 state=PROC_ZOMBIE、exit_code=code；把所有子进程挂到 initproc（孤儿收养），唤醒正在 WT_CHILD 的父/收养者。
+schedule() 切走；僵尸等待父进程 do_wait 回收 PCB/内核栈。
+不再返回用户态；父进程在用户态通过 wait 得到 exit_code。
+内核/用户交错与返回路径
+
+触发：用户执行 ecall（或 ebreak for kernel_execve），陷入保存现场。
+处理：trap 在内核态运行对应 do_*，可能切换页表、阻塞当前或唤醒他人、更新 PCB/内存。
+返回：若当前仍要继续用户态执行，内核把返回值放 tf->gpr.a0，__trapret 恢复寄存器，sret 回用户；若进程退出则不回用户，调度其他进程；新创建的进程通过 forkrets + __trapret 首次回到用户态。
+被阻塞的用户线程在 schedule 后停在内核态，直到被唤醒再次从 schedule 之后继续，最终通过 __trapret 回用户。
+
+## 请给出ucore中一个用户态进程的执行状态生命周期图（包执行状态，执行状态之间的变换关系，以及产生变换的事件或函数调用）。（字符方式画即可）
+```
+           +-------------------------------+
+           |           创建流程            |
+           | (alloc_proc/do_fork/proc_init)|
+           +-------------------------------+
+                       |
+                       v
+               [PROC_UNINIT]
+                       |
+                       | proc_init / wakeup_proc
+                       v
+               [PROC_RUNNABLE] <------------------+
+                       |                          |
+                       | schedule → proc_run      | wakeup_proc (被唤醒)
+                       v                          |
+                 (RUNNING on CPU)                 |
+                       |                          |
+    +------------------+------------------+       |
+    |                  |                  |       |
+    | do_exit          | do_wait/do_sleep |       |
+    | (或 PF_EXITING)  | try_free_pages   |       |
+    v                  v                  |
+ [PROC_ZOMBIE]   [PROC_SLEEPING] ---------+ 
+    |                  ^
+    | wake parent      |
+    | (do_wait 返回)   |
+    +------------------+
+           资源回收
+       (do_wait 回收 PCB/
+        kstack; 进程消亡)
+```
+- PROC_UNINIT：刚分配 PCB，未入就绪队列（alloc_proc）。
+- PROC_RUNNABLE：可被调度运行；schedule/proc_run 将其放上 CPU。
+- RUNNING（运行中）：本质仍标记为 PROC_RUNNABLE，但正占用 CPU。
+- PROC_SLEEPING：阻塞睡眠，典型于 do_wait、do_sleep、内存回收等待等；wakeup_proc 将其变回 PROC_RUNNABLE。
+- PROC_ZOMBIE：do_exit 设定，等待父进程 do_wait 回收 PCB/内核栈；回收后进程生命周期结束。
+- 特殊进程：idleproc/initproc 也在同一框架内（idleproc 不允许 exit；孤儿进程被收养到 initproc）。
