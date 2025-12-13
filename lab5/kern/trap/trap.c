@@ -17,6 +17,8 @@
 #include <sbi.h>
 
 #define TICK_NUM 100
+extern volatile size_t ticks;
+static int num = 0;
 
 static void print_ticks()
 {
