@@ -750,7 +750,7 @@ load_icode(unsigned char *binary, size_t size)
      */
     tf->gpr.sp = USTACKTOP;
     tf->epc = elf->e_entry;
-    tf->status = SSTATUS_SPIE; // User mode, interrupts enabled
+    tf->status = (sstatus & ~SSTATUS_SPP) | SSTATUS_SPIE; // User mode, interrupts enabled
 
     ret = 0;
 out:
