@@ -10,3 +10,7 @@ lab5/obj/
 lab5/bin/
 lab6/obj/
 lab6/bin/
+*.log
+*.tmp
+*.out
+*.in
