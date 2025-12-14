@@ -8,6 +8,7 @@ lab4/obj/
 lab4/bin/
 lab5/obj/
 lab5/bin/
+lab5/Makefile
 lab6/obj/
 lab6/bin/
 *.log
