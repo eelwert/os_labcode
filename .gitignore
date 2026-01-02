@@ -11,6 +11,10 @@ lab5/bin/
 lab5/Makefile
 lab6/obj/
 lab6/bin/
+lab7/obj/
+lab7/bin/
+lab8/obj/
+lab8/bin/
 *.log
 *.tmp
 *.out

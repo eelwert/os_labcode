@@ -1,6 +1,6 @@
 ## 1. 在大模型的帮助下，完成整个调试的流程，观察一下ecall指令和sret指令是如何被qemu处理的，并简单阅读一下调试中涉及到的qemu源码，解释其中的关键流程。
-
-触发ecall异常导致终端, 先查看一些基础信息:
+开启挂在到qemu的终端, 并开启忽略管道信号, 并且打上ecall处的条件断点 **`break riscv_cpu_do_interrupt if cs->exception_index == 8`**, 这里的 8 正好代表User 态下的 ecall的异常号.
+在ucore中执行下一步(ecall)了, 此时终端2会触发ecall异常导致终端, 先查看一些基础信息:
 ```bash
 [Switching to Thread 0x7f28bffff640 (LWP 8094)]
 
@@ -256,23 +256,4 @@ LLM 给出的解释是
 
 
 
-终端2：
-```
-pgrep -f qemu-system-riscv64
-sudo gdb
-attach
-break riscv_cpu_do_interrupt if cs->exception_index == 8
-break helper_sret
-c
 
-
-
-disable 1
-```
-终端3：
-```
-make gdb
-add-symbol-file obj/__user_exit.out
-break user/libs/syscall.c:18
-break kern/trap/trapentry.S:133
-```
