@@ -17,6 +17,8 @@
 #include <sbi.h>
 
 #define TICK_NUM 100
+extern volatile size_t ticks;
+static int num = 0;
 
 static void print_ticks()
 {
@@ -135,14 +137,9 @@ void interrupt_handler(struct trapframe *tf)
         // (3) 每100次时钟中断打印一次
         if (ticks % TICK_NUM == 0) {
             print_ticks();
-            num++;
-                
-            // (4) 打印10次后关机
-            if (num == 10) {
-                sbi_shutdown();
-            }
+            num++; 
         }
-           
+        current->need_resched = 1;
         break;
     case IRQ_H_TIMER:
         cprintf("Hypervisor software interrupt\n");
