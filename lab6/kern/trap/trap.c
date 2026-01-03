@@ -95,6 +95,8 @@ void print_regs(struct pushregs *gpr)
 
 extern struct mm_struct *check_mm_struct;
 
+static int num = 0;
+
 void interrupt_handler(struct trapframe *tf)
 {
     intptr_t cause = (tf->cause << 1) >> 1;
@@ -131,7 +133,16 @@ void interrupt_handler(struct trapframe *tf)
 
         // lab6: YOUR CODE  (update LAB3 steps)
         //  在时钟中断时调用调度器的 sched_class_proc_tick 函数
-
+        clock_set_next_event();
+        ticks++;
+        // if (ticks % TICK_NUM == 0) {
+        //     print_ticks();
+        //     num++;
+        // }
+        // if (num == 10) {
+        //     sbi_shutdown();
+        // }
+        sched_class_proc_tick(current);
         break;
     case IRQ_H_TIMER:
         cprintf("Hypervisor software interrupt\n");
@@ -204,12 +215,24 @@ void exception_handler(struct trapframe *tf)
         break;
     case CAUSE_FETCH_PAGE_FAULT:
         cprintf("Instruction page fault\n");
+        if ((ret = do_pgfault(current->mm, 0, tf->tval)) != 0) {
+            print_trapframe(tf);
+            panic("handle pgfault failed. %e\n", ret);
+        }
         break;
     case CAUSE_LOAD_PAGE_FAULT:
         cprintf("Load page fault\n");
+        if ((ret = do_pgfault(current->mm, 0, tf->tval)) != 0) {
+            print_trapframe(tf);
+            panic("handle pgfault failed. %e\n", ret);
+        }
         break;
     case CAUSE_STORE_PAGE_FAULT:
         cprintf("Store/AMO page fault\n");
+        if ((ret = do_pgfault(current->mm, 2, tf->tval)) != 0) {
+            print_trapframe(tf);
+            panic("handle pgfault failed. %e\n", ret);
+        }
         break;
     default:
         print_trapframe(tf);

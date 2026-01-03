@@ -348,7 +348,7 @@ default_check() {
 
 ## check now!!
 run_test -prog 'priority'      -check default_check             \
-        'sched class: RR_scheduler'                         \
+        'sched class: stride_scheduler'                         \
         'kernel_execve: pid = 2, name = "priority".'            \
         'main: fork ok,now need to wait pids.'                  \
         'set priority to 5'                                     \
