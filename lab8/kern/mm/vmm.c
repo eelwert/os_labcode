@@ -8,6 +8,7 @@
 #include <riscv.h>
 #include <kmalloc.h>
 
+volatile unsigned int pgfault_num = 0;
 /*
   vmm design include two parts: mm_struct (mm) & vma_struct (vma)
   mm is the memory manager for the set of continuous virtual memory
@@ -410,4 +411,64 @@ bool copy_string(struct mm_struct *mm, char *dst, const char *src,
         dst += part, src += part, maxn -= part;
         part = PGSIZE;
     }
+}
+
+int do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
+    int ret = -E_INVAL;
+    struct vma_struct *vma = find_vma(mm, addr);
+
+    pgfault_num++;
+    if (vma == NULL || vma->vm_start > addr) {
+        cprintf("not valid addr %x, and  can not find it in vma\n", addr);
+        goto failed;
+    }
+    switch (error_code & 3) {
+    default:
+            /* error code flag : default is 3 ( W/R=1, P=1): write, present */
+    case 2: /* error code flag : (W/R=1, P=0): write, not present */
+        if (!(vma->vm_flags & VM_WRITE)) {
+            cprintf("do_pgfault failed: error code flag = write AND not present, but the addr's vma cannot write\n");
+            goto failed;
+        }
+        break;
+    case 1: /* error code flag : (W/R=0, P=1): read, present */
+        cprintf("do_pgfault failed: error code flag = read AND present\n");
+        goto failed;
+    case 0: /* error code flag : (W/R=0, P=0): read, not present */
+        if (!(vma->vm_flags & (VM_READ | VM_EXEC))) {
+            cprintf("do_pgfault failed: error code flag = read AND not present, but the addr's vma cannot read or exec\n");
+            goto failed;
+        }
+    }
+    uint32_t perm = PTE_U;
+    if (vma->vm_flags & VM_WRITE) {
+        perm |= (PTE_R | PTE_W);
+    }
+    if (vma->vm_flags & VM_READ) {
+        perm |= PTE_R;
+    }
+    if (vma->vm_flags & VM_EXEC) {
+        perm |= PTE_X;
+    }
+    addr = ROUNDDOWN(addr, PGSIZE);
+    ret = -E_NO_MEM;
+    pte_t *ptep = NULL;
+    
+    if ((ptep = get_pte(mm->pgdir, addr, 1)) == NULL) {
+        cprintf("get_pte in do_pgfault failed\n");
+        goto failed;
+    }
+    
+    if (*ptep == 0) { 
+        if (pgdir_alloc_page(mm->pgdir, addr, perm) == NULL) {
+            cprintf("pgdir_alloc_page in do_pgfault failed\n");
+            goto failed;
+        }
+    } else {
+        cprintf("unexpected pte %x in do_pgfault\n", *ptep);
+        goto failed;
+    }
+    ret = 0;
+failed:
+    return ret;
 }

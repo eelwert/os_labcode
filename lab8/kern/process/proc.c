@@ -153,7 +153,13 @@ alloc_proc(void)
         proc->lab6_stride = 0;
         proc->lab6_priority = 0;
 
-        
+        // LAB8新增：初始化filesp
+        proc->filesp = files_create(); // 创建文件描述符表
+        if (proc->filesp == NULL) {
+            kfree(proc); // 创建失败则释放proc，避免内存泄漏
+            return NULL;
+        }
+        files_count_inc(proc->filesp); // 增加引用计数
     }
     return proc;
 }
@@ -272,6 +278,19 @@ void proc_run(struct proc_struct *proc)
        *        MACROs or Functions:
        *       flush_tlb():          flush the tlb        
        */
+    if (proc != current)
+    {
+        bool intr_flag;
+        struct proc_struct *prev = current, *next = proc;
+        local_intr_save(intr_flag);
+        {
+            current = proc;
+            lsatp(next->pgdir);
+            flush_tlb(); // LAB8新增：刷新TLB
+            switch_to(&(prev->context), &(next->context));
+        }
+        local_intr_restore(intr_flag);
+    }
     
 }
 
@@ -384,6 +403,8 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc)
     /* current is a kernel thread */
     if (oldmm == NULL)
     {
+        proc->mm = NULL;
+        proc->pgdir = boot_pgdir_pa;
         return 0;
     }
     if (clone_flags & CLONE_VM)
@@ -538,10 +559,39 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
      *    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
      *    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
      */
-    
+    if ((proc = alloc_proc()) == NULL) {
+        goto fork_out;
+    }
+
+    proc->parent = current;
+    assert(current->wait_state == 0);
+
+    if (setup_kstack(proc) != 0) {
+        goto bad_fork_cleanup_proc;
+    }
+
+    if (copy_mm(clone_flags, proc) != 0) {
+        goto bad_fork_cleanup_kstack;
+    }
+
+    copy_thread(proc, stack, tf);
+
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);
+        set_links(proc);
+    }
+    local_intr_restore(intr_flag);
+
+    wakeup_proc(proc);
+
+    ret = proc->pid;
+
     if (copy_files(clone_flags, proc) != 0)
     { // for LAB8
-        goto bad_fork_cleanup_kstack;
+        goto bad_fork_cleanup_fs;
     }
     
 fork_out:
@@ -666,6 +716,206 @@ load_icode(int fd, int argc, char **kargv)
      * (7) setup trapframe for user environment
      * (8) if up steps failed, you should cleanup the env.
      */
+
+    if (current->mm != NULL) {
+        panic("load_icode: current->mm must be empty.\n");
+    }
+
+    int ret = -E_NO_MEM;
+    struct mm_struct *mm;
+    //(1) create a new mm for current process
+    if ((mm = mm_create()) == NULL) {
+        goto bad_mm;
+    }
+    //(2) create a new PDT, and mm->pgdir= kernel virtual addr of PDT
+    if (setup_pgdir(mm) != 0) {
+        goto bad_pgdir_cleanup_mm;
+    }
+    //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
+    // 从文件读取ELF头部
+    struct elfhdr elf;
+    if (load_icode_read(fd, &elf, sizeof(struct elfhdr), 0) != 0) {
+        ret = -E_INVAL_ELF;
+        goto bad_elf_cleanup_pgdir;
+    }
+    //(3.3) This program is valid?
+    if (elf.e_magic != ELF_MAGIC) {
+        ret = -E_INVAL_ELF;
+        goto bad_elf_cleanup_pgdir;
+    }
+
+    uint32_t vm_flags, perm;
+    struct proghdr ph; // 单个ph，循环读取
+    for (int i = 0; i < elf.e_phnum; i++) 
+    {
+        // 从文件读取单个程序段头部
+        off_t ph_offset = elf.e_phoff + i * sizeof(struct proghdr);
+        if (load_icode_read(fd, &ph, sizeof(struct proghdr), ph_offset) != 0) {
+            ret = -E_INVAL_ELF;
+            goto bad_cleanup_mmap;
+        }
+
+        //(3.4) find every program section headers
+        if (ph.p_type != ELF_PT_LOAD) 
+        {
+            continue;
+        }
+        if (ph.p_filesz > ph.p_memsz) 
+        {
+            ret = -E_INVAL_ELF;
+            goto bad_cleanup_mmap;
+        }
+        if (ph.p_filesz == 0)
+        {
+            // continue ;
+        }
+         //(3.5) call mm_map fun to setup the new vma ( ph->p_va, ph->p_memsz)
+        vm_flags = 0, perm = PTE_U | PTE_V;
+        if (ph.p_flags & ELF_PF_X) 
+            vm_flags |= VM_EXEC;
+        if (ph.p_flags & ELF_PF_W) 
+            vm_flags |= VM_WRITE;
+        if (ph.p_flags & ELF_PF_R) 
+            vm_flags |= VM_READ;
+        // modify the perm bits here for RISC-V
+        if (vm_flags & VM_READ) 
+            perm |= PTE_R;
+        if (vm_flags & VM_WRITE) 
+            perm |= (PTE_W | PTE_R);
+        if (vm_flags & VM_EXEC) 
+            perm |= PTE_X;
+        if ((ret = mm_map(mm, ph.p_va, ph.p_memsz, vm_flags, NULL)) != 0) 
+        {
+            goto bad_cleanup_mmap;
+        }
+        //(3.6) alloc memory, and  copy the contents of every program section (from, from+end) to process's memory (la, la+end)
+        // 从文件加载TEXT/DATA段
+        uintptr_t start = ph.p_va;
+        uintptr_t end = ph.p_va + ph.p_filesz;
+        uintptr_t la = ROUNDDOWN(start, PGSIZE);
+        struct Page *page;
+
+        // 从fd的ph.p_offset偏移读取数据
+        while (start < end) 
+        {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) 
+            {
+                goto bad_cleanup_mmap;
+            }
+            size_t off = start - la, size = PGSIZE - off;
+            if (end < la + PGSIZE) 
+            {
+                size -= (la + PGSIZE) - end;
+            }
+            if (load_icode_read(fd, page2kva(page) + off, size, ph.p_offset + (start - ph.p_va)) != 0) 
+            {
+                ret = -E_INVAL_ELF;
+                goto bad_cleanup_mmap;
+            }
+
+            start += size;
+            la += PGSIZE;
+        }
+        //(3.6.2) build BSS section of binary program
+        end = ph.p_va + ph.p_memsz;
+        if (start < la) 
+        {
+            if (start == end) 
+            {
+                continue;
+            }
+            size_t off = start - la, size = PGSIZE - off;
+            if (end < la + PGSIZE) 
+            {
+                size -= (la + PGSIZE) - end;
+            }
+            memset(page2kva(page) + off, 0, size);
+            start += size;
+        }
+        while (start < end) 
+        {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) 
+            {
+                goto bad_cleanup_mmap;
+            }
+            size_t off = start - la;
+            size_t size = PGSIZE - off;
+            if (end < la + PGSIZE) 
+            {
+                size -= (la + PGSIZE) - end;
+            }
+            memset(page2kva(page) + off, 0, size);
+            start += size;
+            la += PGSIZE;
+        }
+    }
+    //(4) build user stack memory
+    // 创建用户栈+传递argc/argv
+    vm_flags = VM_READ | VM_WRITE | VM_STACK;
+    if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) 
+    {
+        goto bad_cleanup_mmap;
+    }
+
+    // 预留argc和argv空间：argv数组（argc个指针）+ argc（int）
+    uintptr_t stack_top = USTACKTOP;
+    int argv_size = argc * sizeof(char *);
+    stack_top -= argv_size + sizeof(int);
+    stack_top = ROUNDDOWN(stack_top, PGSIZE);
+
+    // 分配栈页（替代LAB5的4个固定页，动态分配）
+    const char **uargv = (const char **)(stack_top + sizeof(int));
+    if (pgdir_alloc_page(mm->pgdir, stack_top, PTE_USER) == NULL) {
+        goto bad_cleanup_mmap;
+    }
+
+    // 拷贝argc和argv到用户栈
+    *(int *)stack_top = argc; 
+    for (int i = 0; i < argc; i++) {
+        size_t len = strlen(kargv[i]) + 1; 
+        stack_top -= len;
+        if ((stack_top & (PGSIZE - 1)) < len) {
+            stack_top = ROUNDDOWN(stack_top, PGSIZE);
+            if (pgdir_alloc_page(mm->pgdir, stack_top, PTE_USER) == NULL) {
+                goto bad_cleanup_mmap;
+            }
+        }
+        strcpy((char *)stack_top, kargv[i]);
+        uargv[i] = (const char *)stack_top; 
+    }
+    uargv[argc] = NULL; // argv数组结束符（NULL）
+
+    //(5) set current process's mm, sr3, and set satp reg = physical addr of Page Directory
+    mm_count_inc(mm);
+    current->mm = mm;
+    current->pgdir = PADDR(mm->pgdir);
+    lsatp(PADDR(mm->pgdir));
+
+    //(6) setup trapframe for user environment
+    struct trapframe *tf = current->tf;
+    uintptr_t sstatus = tf->status;
+    memset(tf, 0, sizeof(struct trapframe));
+    tf->status = sstatus | SSTATUS_SPIE;
+    tf->status &= ~SSTATUS_SPP;
+    // 修改栈顶为包含argc/argv的地址
+    tf->gpr.sp = (uintptr_t)uargv - sizeof(int);
+    tf->epc = elf.e_entry; 
+    // a0=argc，a1=argv
+    tf->gpr.a0 = argc;
+    tf->gpr.a1 = (uintptr_t)uargv;
+
+    ret = 0;
+out:
+    return ret;
+
+bad_cleanup_mmap:
+    exit_mmap(mm);
+bad_elf_cleanup_pgdir:
+    put_pgdir(mm);
+bad_pgdir_cleanup_mm:
+    mm_destroy(mm);
+bad_mm:
+    goto out;
     
 }
 
@@ -779,6 +1029,7 @@ int do_execve(const char *name, int argc, const char **argv)
     return 0;
 
 execve_exit:
+    sysfile_close(fd); // LAB8新增：关闭打开的文件
     put_kargv(argc, kargv);
     do_exit(ret);
     panic("already exit: %e.\n", ret);
@@ -1008,6 +1259,8 @@ void proc_init(void)
     nr_process++;
 
     current = idleproc;
+
+    idleproc->pgdir = boot_pgdir_pa;
 
     int pid = kernel_thread(init_main, NULL, 0);
     if (pid <= 0)
