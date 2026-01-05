@@ -216,8 +216,8 @@ switch_kernel_memorylayout()
         bootstack[-PGSIZE] = 0;
 
         // set pages beneath and above the kernel stack as guardians
-        boot_map_segment(boot_pgdir_va, (uintptr_t)bootstackguard, PGSIZE, PADDR(bootstackguard), 0);
-        boot_map_segment(boot_pgdir_va, (uintptr_t)boot_page_table_sv39, PGSIZE, PADDR(boot_page_table_sv39), 0);
+        boot_map_segment(boot_pgdir_va, bootstackguard, PGSIZE, PADDR(bootstackguard), 0);
+        boot_map_segment(boot_pgdir_va, boot_page_table_sv39, PGSIZE, PADDR(boot_page_table_sv39), 0);
         flush_tlb();
 
         // the following four statements should all crash
