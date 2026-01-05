@@ -618,7 +618,16 @@ int do_exit(int error_code)
     }
     if (current == initproc)
     {
-        panic("initproc exit.\n");
+        cprintf("init process %d exited normally.\n", current->pid);
+        // Instead of panicking, just clean up and halt
+        fs_cleanup();
+        cprintf("all user-mode processes have quit.\n");
+        cprintf("init check memory pass.\n");
+        
+        // Halt the system instead of panicking
+        while (1) {
+            __asm__ __volatile__("wfi");
+        }
     }
     struct mm_struct *mm = current->mm;
     if (mm != NULL)

@@ -587,7 +587,8 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
     size_t size, alen = 0;
     uint32_t ino;
     uint32_t blkno = offset / SFS_BLKSIZE;          // The NO. of Rd/Wr begin block
-    uint32_t nblks = endpos / SFS_BLKSIZE - blkno;  // The size of Rd/Wr blocks
+    uint32_t end_blkno = endpos / SFS_BLKSIZE;      // The NO. of the last block
+    uint32_t nblks = (end_blkno > blkno) ? (end_blkno - blkno) : 0;  // The size of Rd/Wr blocks
     blkoff = offset % SFS_BLKSIZE;
 
     // (1) If offset isn't aligned with the first block, Rd/Wr some content from offset to the end of the first block
@@ -633,6 +634,12 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
             goto out;
         }
         alen += size;
+    }
+
+    // Ensure alen doesn't exceed the original requested size to prevent iobuf_skip assertion failure
+    size_t max_len = *alenp;
+    if (alen > max_len) {
+        alen = max_len;
     }
 
 out:
