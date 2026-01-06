@@ -587,8 +587,7 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
     size_t size, alen = 0;
     uint32_t ino;
     uint32_t blkno = offset / SFS_BLKSIZE;          // The NO. of Rd/Wr begin block
-    uint32_t end_blkno = endpos / SFS_BLKSIZE;      // The NO. of the last block
-    uint32_t nblks = (end_blkno > blkno) ? (end_blkno - blkno) : 0;  // The size of Rd/Wr blocks
+    uint32_t nblks = endpos / SFS_BLKSIZE - blkno;  // The size of Rd/Wr blocks
     blkoff = offset % SFS_BLKSIZE;
 
     // (1) If offset isn't aligned with the first block, Rd/Wr some content from offset to the end of the first block
@@ -600,8 +599,11 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
         if ((ret = sfs_buf_op(sfs, buf, first_blk_size, ino, blkoff)) != 0) {
             goto out;
         }
-        buf += first_blk_size;
         alen += first_blk_size;
+        if (nblks == 0) {
+            goto out;
+        }
+        buf += first_blk_size;
         blkno++;
         nblks--;
     }
@@ -612,9 +614,6 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
             goto out;
         }
         size = SFS_BLKSIZE;
-        if (write && nblks == 1 && (endpos % SFS_BLKSIZE) != 0) {
-            size = endpos % SFS_BLKSIZE;
-        }
         if ((ret = sfs_block_op(sfs, buf, ino, 1)) != 0) {
             goto out;
         }
@@ -627,19 +626,13 @@ sfs_io_nolock(struct sfs_fs *sfs, struct sfs_inode *sin, void *buf, off_t offset
     // (3) If end position isn't aligned with the last block, Rd/Wr some content from begin to the (endpos % SFS_BLKSIZE) of the last block
     if (endpos % SFS_BLKSIZE != 0 && nblks == 0 && alen < endpos - offset) {
         size = endpos - offset - alen;
-        if ((ret = sfs_bmap_load_nolock(sfs, sin, blkno, &ino)) != 0) {
+        if ((ret = sfs_bmap_load_nolock(sfs, sin,  blkno, &ino)) != 0) {
             goto out;
         }
         if ((ret = sfs_buf_op(sfs, buf, size, ino, 0)) != 0) {
             goto out;
         }
         alen += size;
-    }
-
-    // Ensure alen doesn't exceed the original requested size to prevent iobuf_skip assertion failure
-    size_t max_len = *alenp;
-    if (alen > max_len) {
-        alen = max_len;
     }
 
 out:
