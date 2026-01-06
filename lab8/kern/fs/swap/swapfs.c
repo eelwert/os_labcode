@@ -14,7 +14,7 @@ void swapfs_init(void)
     }
     max_swap_offset = ide_device_size(SWAP_DEV_NO) / (PGSIZE / SECTSIZE);
 }
-
+uint32_t swap_offset(swap_entry_t entry);
 int swapfs_read(swap_entry_t entry, struct Page *page)
 {
     return ide_read_secs(SWAP_DEV_NO, swap_offset(entry) * PAGE_NSECT, page2kva(page), PAGE_NSECT);

@@ -16,6 +16,7 @@
 #include <sync.h>
 #include <sbi.h>
 #include <proc.h>
+#include <dev_stdin.h>
 
 #define TICK_NUM 2
 
